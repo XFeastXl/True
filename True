@@ -1,0 +1,3325 @@
+repeat wait() until game:IsLoaded() and game.Players.LocalPlayer.Character
+
+if library then
+    library:Destroy()
+end
+
+if kwconnections then
+    for i, v in pairs(kwconnections) do
+        if v then v:Disconnect() end
+    end
+end
+
+local replicatedStorage = game:GetService("ReplicatedStorage")
+local userInputService = game:GetService("UserInputService")
+local httpService = game:GetService("HttpService")
+local runService = game:GetService("RunService")
+local workspace = game:GetService("Workspace")
+local players = game:GetService("Players")
+local coreGui = game:GetService("CoreGui")
+
+local localPlayer = players.LocalPlayer
+local camera = workspace.CurrentCamera
+
+local placedStructures = workspace.placedStructures
+local worldResources = workspace.worldResources
+local droppedItems = workspace.droppedItems
+local characters = workspace.Characters
+local aiserver = workspace["AI_Server"]
+local aiclient = workspace["AI_Client"]
+local farmland = workspace.farmland
+local boats = workspace.boats
+
+local clientDataModule = require(replicatedStorage.modules.player.ClientData)
+local itemsModule = require(replicatedStorage.game.Items)
+
+local tpCheckTimeAttribute
+
+task.spawn(function()
+    repeat wait(0.2)
+        for i, v in pairs(localPlayer:GetAttributes()) do
+            if type(v) == "number" and v > 1 and i ~= "combatTimer" and i ~= "ClientVotes" and i ~= "FreeVoteTime" then
+                tpCheckTimeAttribute = tostring(i)
+            end
+        end
+    until tpCheckTimeAttribute
+end)
+
+local lastPositionAttribute
+for i, v in pairs(localPlayer.Character:GetAttributes()) do
+    if typeof(v) == "Vector3" then
+        lastPositionAttribute = i; break
+    end
+end
+
+local pickupRemote = replicatedStorage.remoteInterface.inventory.pickupItem
+
+local kwframe = nil
+
+getgenv().kwfunctions = getgenv().kwfunctions or {}
+getgenv().kwconnections = {}
+
+local vars = {}; do
+    vars.killaura = false
+    vars.kill_distance = 18
+    vars.kill_highlight = true
+    vars.kill_teleport = true
+    vars.kill_highlight_color = Color3.new(1, 0, 0)
+    vars.kill_teleport_type = "Above"
+    vars.disableDelay = false
+
+    vars.alliesCheck = false
+    vars.teamcheck = false
+    vars.enemiesOnly = false
+    vars.spectate = true
+    vars.locktarget = true
+
+    vars.chopaura = false
+    vars.chop_distance = 40
+    vars.chop_highlight = true
+
+    vars.mineaura = false
+    vars.mine_distance = 20
+    vars.mine_highlight = true
+
+    vars.huntaura = false
+    vars.aihit_distance = 25
+    vars.aihit_highlight = true
+
+    vars.bossaura = false
+    vars.boss_distance = 25
+    vars.boss_highlight = true
+
+    vars.pickup_distance = 18
+    vars.ignoreClientItems = true
+
+    vars.speed = 20
+
+    vars.nofallFunction = nil
+    vars.placeStructureFunction = nil
+
+    vars.invisiblefly = false
+    vars.playerClone = nil
+    vars.flySpeed = 2
+    vars.landed = false
+
+    vars.autofarm = false
+    vars.autofarmType = "Ores"
+    vars.inAutofarm = false
+    vars.takeBreak = false
+    vars.teleporting = false
+    vars.disconnect_done = false
+    vars.hide_enabled = false
+
+    vars.waypoints = {}
+    vars.waypointsDropdown = nil
+    vars.waypointName = nil
+    vars.refreshWaypoints = false
+
+    vars.isMobile = userInputService.TouchEnabled
+
+    vars.esps = {}
+    vars.coloredEsp = false
+    vars.espTeamcheck = false
+    vars.espAllycheck = false
+    vars.espArmor = false
+
+    vars.oreesps = {}
+    vars.ores = {}
+    vars.ignoreores = {}
+
+    vars.foldername = "aurasolutionsPremium"
+
+    vars.boatteleporting = false
+
+    vars.locations = {
+        ["Desert"] = Vector3.new(1170, 25, -81),
+        ["Arctic"] = Vector3.new(-1535, 34, -1297),
+        ["Jungle"] = Vector3.new(-1713, 28, 614),
+        ["Volcano"] = Vector3.new(1516, 34, 1881),
+        ["Runestone Island"] = Vector3.new(-98, 37, 1325),
+        ["Middle"] = Vector3.new(-160, 31, -139),
+        ["Waterfall"] = Vector3.new(-2268, 27, 21),
+        ["Merchant 1"] = Vector3.new(-71, 37, 372),
+        ["Merchant 2"] = Vector3.new(-78, 29, -1148),
+    }
+end
+
+for i, v in pairs(worldResources:GetChildren()) do
+    if v:GetAttribute("resourceType") == "Ore" then
+        table.insert(vars.ores, tostring(v))
+    end
+end
+
+local funcs = {}; do
+    function funcs.getHealth(inst)
+        if aiserver:IsAncestorOf(inst) or aiclient:IsAncestorOf(inst) then
+            return inst:GetAttribute("Health") or 0
+        elseif characters:IsAncestorOf(inst) or players:IsAncestorOf(inst) then
+            local character = inst.Character or inst
+
+            if character and character:FindFirstChild("Humanoid") then
+                return character.Humanoid.Health
+            end
+        elseif inst:GetAttribute("health") then
+            return inst:GetAttribute("health")
+        elseif inst:GetAttribute("Health") then
+            return inst:GetAttribute("Health")
+        end
+
+        return 0
+    end
+
+    function funcs.getHumanoid(plr)
+        local plr = plr or localPlayer
+
+        if plr.Character then
+            return plr.Character:FindFirstChild("Humanoid")
+        end
+    end
+
+    function funcs.getRoot(plr)
+        local plr = plr or localPlayer
+
+        if plr.Character then
+            return plr.Character:FindFirstChild("HumanoidRootPart")
+        end
+    end
+
+    function funcs.getPlayer(str, tbl)
+        local tbl = tbl or {}
+
+        for _, v in pairs({"Name", "DisplayName"}) do
+            for _, plr in pairs(players:GetChildren()) do
+                if v ~= localPlayer and not table.find(tbl, plr) then
+                    if string.find(plr[v]:lower(), tostring(str):lower()) then
+                        return plr
+                    end
+                end
+            end
+        end
+    end
+
+    function funcs.getKingdom(str)
+        if not str then
+            return
+        end
+
+        for i, v in pairs(replicatedStorage.kingdoms:GetChildren()) do
+            if tostring(v) and tostring(str) and tostring(v):lower() == str:lower() then
+                return v
+            end
+        end
+    end
+
+    function funcs.getPlayersKingdom(plr)
+        local plr = plr or localPlayer
+
+        return funcs.getKingdom(plr:GetAttribute("kingdom"))
+    end
+
+    function funcs.getMembersInKingdom(kingdom)
+        local kingdom = not kingdom and funcs.getPlayersKingdom() or typeof(kingdom) == "Instance" and kingdom or funcs.getKingdom(kingdom)
+
+        if not kingdom then
+            return {}
+        end
+
+        local members = {}
+
+        for i, v in pairs(kingdom.members:GetChildren()) do
+            local player = players:FindFirstChild(tostring(v))
+            table.insert(members, player)
+        end
+
+        return members
+    end
+
+    function funcs.getEnemies(kingdom)
+        local kingdom = not kingdom and funcs.getPlayersKingdom() or typeof(kingdom) == "Instance" and kingdom or funcs.getKingdom(kingdom)
+
+        if not kingdom then
+            return {}
+        end
+
+        local enemies = {}
+
+        for i, v in pairs(kingdom.relationships:GetChildren()) do
+            local relationship = v:GetAttribute("Relationship")
+
+            if relationship and relationship == "Enemies" then
+                table.insert(enemies, v)
+            end
+        end
+
+        return enemies
+    end
+
+    function funcs.getAllies(kingdom)
+        local kingdom = not kingdom and funcs.getPlayersKingdom() or typeof(kingdom) == "Instance" and kingdom or funcs.getKingdom(kingdom)
+
+        if not kingdom then
+            return
+        end
+
+        local allies = {}
+
+        for i, v in pairs(kingdom.relationships:GetChildren()) do
+            local relationship = v:GetAttribute("Relationship")
+
+            if relationship and relationship == "Allies" then
+                table.insert(allies, v)
+            end
+        end
+
+        return allies
+    end
+
+    function funcs.isEnemy(plr)
+        for _, enemy in pairs(funcs.getEnemies()) do
+            if table.find(funcs.getMembersInKingdom(enemy.Value), plr) then
+                return true
+            end
+        end
+
+        return false
+    end
+
+    function funcs.isAlly(plr)
+        local allies = funcs.getAllies()
+
+        if allies then
+            for _, ally in pairs(allies) do
+                if table.find(funcs.getMembersInKingdom(ally.Value), plr) then
+                    return true
+                end
+            end
+        end
+
+        return false
+    end
+
+    function funcs.getClosestPlayer(pos, tbl, settings)
+        local plr, distance = nil, math.huge
+        local tbl = tbl or {}
+        local pos = pos or localPlayer.Character:GetPivot().Position
+
+        local team = localPlayer.TeamColor
+
+        for i, v in pairs(players:GetChildren()) do
+            if v ~= localPlayer and not table.find(tbl, v) then
+                if funcs.getHealth(v) > 0 and v.Character:GetPivot() then
+                    local magnitude = (pos - v.Character:GetPivot().Position).Magnitude
+
+                    if settings then
+                        if vars.enemiesOnly then
+                            if not funcs.isEnemy(v) then
+                                continue
+                            end
+                        else
+                            if vars.teamcheck then
+                                if v.TeamColor == team and not v.Neutral then
+                                    continue
+                                end
+                            end
+
+                            if vars.alliesCheck then
+                                if funcs.isAlly(v) then
+                                    continue
+                                end
+                            end
+                        end
+                    end
+
+                    if magnitude < distance then
+                        plr = v; distance = magnitude
+                    end
+                end
+            end
+        end
+
+        return plr, distance
+    end
+
+    function funcs.getClosestChoppable(pos)
+        local choppable, distance = nil, math.huge
+        local pos = pos or localPlayer.Character:GetPivot().Position
+
+        for i, v in pairs(worldResources.choppable:GetChildren()) do
+            for i, v in pairs(v:GetChildren()) do
+                if funcs.getHealth(v) > 0 then
+                    local magnitude = (pos - v:GetPivot().Position).Magnitude
+
+                    if magnitude < distance then
+                        choppable = v; distance = magnitude
+                    end
+                end
+            end
+        end
+
+        return choppable, distance
+    end
+
+    function funcs.getClosestMineable(pos)
+        local mineable, distance = nil, math.huge
+        local pos = pos or localPlayer.Character:GetPivot().Position
+
+        for i, v in pairs(worldResources.mineable:GetChildren()) do
+            for i, v in pairs(v:GetChildren()) do
+                if funcs.getHealth(v) > 0 then
+                    local magnitude = (pos - v:GetPivot().Position).Magnitude
+
+                    if magnitude < distance then
+                        mineable = v; distance = magnitude
+                    end
+                end
+            end
+        end
+
+        return mineable, distance
+    end
+
+    function funcs.getClosestAnimal(pos, ignorehelpers)
+        local ignorehelpers = ignorehelpers or false
+        local animal, distance = nil, math.huge
+        local pos = pos or localPlayer.Character:GetPivot().Position
+
+        for i, v in pairs(aiserver:GetChildren()) do
+            if funcs.getHealth(v) > 0 and (not ignorehelpers or not replicatedStorage.game.AIModels.HelperNPCs:FindFirstChild(tostring(v))) then
+                local magnitude = (pos - v:GetPivot().Position).Magnitude
+
+                if magnitude < distance then
+                    animal = v; distance = magnitude
+                end
+            end
+        end
+
+        return animal, distance
+    end
+
+    function funcs.getChoppablesInRange(range, pos)
+        local pos = pos or localPlayer.Character:GetPivot().Position
+        local choppables = {}
+
+        for i, v in pairs(worldResources.choppable:GetChildren()) do
+            for i, v in pairs(v:GetChildren()) do
+                if funcs.getHealth(v) > 0 then
+                    local magnitude = (pos - v:GetPivot().Position).Magnitude
+
+                    if magnitude < range then
+                        table.insert(choppables, v)
+                    end
+                end
+            end
+        end
+
+        return choppables
+    end
+
+    function funcs.getOresInRange(range, pos)
+        local pos = pos or localPlayer.Character:GetPivot().Position
+        local mineables = {}
+
+        for i, v in pairs(worldResources.mineable:GetChildren()) do
+            for i, v in pairs(v:GetChildren()) do
+                if funcs.getHealth(v) > 0 and (not vars.ignoreBoulders or tostring(v) ~= "Boulder") then
+                    if (pos - v:GetPivot().Position).Magnitude <= range then
+                        table.insert(mineables, v)
+                    end
+                end
+            end
+        end
+
+        return mineables
+    end
+
+    function funcs.getAllOresInRange(range, pos)
+        local pos = pos or localPlayer.Character:GetPivot().Position
+        local mineables = {}
+
+        for i, v in pairs(worldResources.mineable:GetChildren()) do
+            for i, v in pairs(v:GetChildren()) do
+                if (not vars.ignoreBoulders or tostring(v) ~= "Boulder") then
+                    if (pos - v:GetPivot().Position).Magnitude <= range then
+                        table.insert(mineables, v)
+                    end
+                end
+            end
+        end
+
+        return mineables
+    end
+
+    function funcs.getChoppablesInRange(range, pos)
+        local pos = pos or localPlayer.Character:GetPivot().Position
+        local choppables = {}
+
+        for i, v in pairs(worldResources.choppable:GetChildren()) do
+            for i, v in pairs(v:GetChildren()) do
+                if funcs.getHealth(v) > 0 then
+                    if (pos - v:GetPivot().Position).Magnitude <= range then
+                        table.insert(choppables, v)
+                    end
+                end
+            end
+        end
+
+        return choppables
+    end
+
+    function funcs.getAllChoppablesInRange(range, pos)
+        local pos = pos or localPlayer.Character:GetPivot().Position
+        local choppables = {}
+
+        for i, v in pairs(worldResources.choppable:GetChildren()) do
+            for i, v in pairs(v:GetChildren()) do
+                if (pos - v:GetPivot().Position).Magnitude <= range then
+                    table.insert(choppables, v)
+                end
+            end
+        end
+
+        return choppables
+    end
+
+    function funcs.getDroppedItemsInRange(range)
+        if not localPlayer.Character then return {} end
+
+        local pos = localPlayer.Character:GetPivot().Position
+        local items = {}
+
+        for i, v in pairs(droppedItems:GetChildren()) do
+            if v:FindFirstChild("TouchInterest") then
+                if not v:GetAttribute("from") or not vars.ignoreClientItems or v:GetAttribute("from") ~= localPlayer.UserId then
+                    local distance = (pos - v:GetPivot().Position).Magnitude
+
+                    if distance <= range then
+                        table.insert(items, v)
+                    end
+                end
+            end
+        end
+
+        return items
+    end
+
+    function funcs.getBoss()
+        return aiserver:FindFirstChild("The Titan")
+    end
+
+    function funcs.getBestTool(t_type, t_stat)
+        local hotbar = clientDataModule.getHotbar()
+        local best, stat = nil, 0
+
+        for i,  v in pairs(hotbar) do
+            if i >= 0 and v ~= -1 then
+                local data = itemsModule.getItemData(v)
+
+                if table.find(data.itemType, t_type) then
+                    if data.itemStats[t_stat] > stat then
+                        best = i; stat = data.itemStats[t_stat]
+                    end
+                end
+            end
+        end
+
+        return best
+    end
+
+    function funcs.getCurrentBoat()
+        local humanoid = funcs.getHumanoid(localPlayer)
+        
+        if humanoid and humanoid.SeatPart then
+            local folder = humanoid.SeatPart:FindFirstAncestorOfClass("Folder")
+            
+            if folder and folder == workspace.boats then
+                return humanoid.SeatPart:FindFirstAncestorOfClass("Model")
+            end
+        end
+    end
+
+    function funcs.removeYAxis(pos)
+        return pos - Vector3.new(0, pos.Y, 0)
+    end
+
+    function funcs.getStructures(str)
+        local structures = {}
+        
+        for _, v in pairs(placedStructures:GetChildren()) do
+            for i, v in pairs(v:GetChildren()) do
+                if tostring(v):lower() == str:lower() then
+                    table.insert(structures, v)
+                end
+            end
+        end
+
+        return structures
+    end
+
+    function funcs.getChairClosestToPosition(pos)
+        local chair, distance = nil, math.huge
+
+        for i, v in pairs(funcs.getStructures("Basic Chair")) do
+            if v.Seat.Occupant == nil then
+                local magnitude = (pos - v.Seat.Position).Magnitude
+
+                if magnitude < distance and magnitude <= 35 then
+                    chair = v; distance = magnitude
+                end
+            end
+        end
+
+        return chair
+    end
+
+    function funcs.getChairsInRange(range, pos)
+        local chairs = {}
+        local root = funcs.getRoot()
+        local pos = pos or root.Position
+
+        if root then
+            for i, v in pairs(funcs.getStructures("Basic Chair")) do
+                local pivot = v:GetPivot()
+
+                if pivot then
+                    local magnitude = (pos - pivot.Position).Magnitude
+
+                    if magnitude <= range then
+                        table.insert(chairs, v)
+                    end
+                end
+            end
+        end
+
+        return chairs
+    end
+
+    function funcs.gotoPosition(pos)
+        local hum = funcs.getHumanoid(localPlayer)
+
+        if not hum then return end
+
+        if hum.SeatPart and not vars.takeBreak then
+            hum.Sit = false
+            wait(0.25)
+        end
+
+        local chair = funcs.getChairClosestToPosition(pos)
+        local distance = chair and (pos - chair.Seat.Position).Magnitude or math.huge
+
+        if not chair or distance >= 50 then
+            local start = tick()
+
+            local part = nil
+
+            part = Instance.new("Part", workspace)
+            part.Anchored = true
+            part.CanCollide = false
+            part.Transparency = 1
+            part.Position = pos
+
+            repeat wait(0.1)
+                if part then
+                    camera.CameraSubject = part
+                else
+                    localPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(pos)
+                end
+                chair = funcs.getChairClosestToPosition(pos)
+            until (chair and (pos - chair.Seat.Position).Magnitude < 300) or tick() - start > 2
+
+            if part then
+                if localPlayer.Character and localPlayer.Character:FindFirstChild("Humanoid") then
+                    camera.CameraSubject = localPlayer.Character.Humanoid
+                end
+
+                part:Destroy()
+            end
+        end
+
+        if chair and chair:FindFirstChild("Seat") then
+            chair.Seat:Sit(localPlayer.Character.Humanoid)
+        end
+    end
+
+    function funcs.setupFolders(str)
+        if not isfolder(str) then
+            makefolder(str)
+        end
+
+        if not isfile(str .. "/waypoints.json") then
+            writefile(str .. "/waypoints.json", "{}")
+        end
+    end
+
+    function funcs.convertWaypoints(tbl)
+        local waypoints = {}
+
+        for i, v in pairs(tbl) do
+            waypoints[i] = Vector3.new(v.x, v.y, v.z)
+        end
+
+        return waypoints
+    end
+
+    function funcs.readWaypoints()
+        funcs.setupFolders(vars.foldername)
+
+        local loaded = httpService:JSONDecode(readfile(vars.foldername .. "/waypoints.json"))
+
+        return funcs.convertWaypoints(loaded)
+    end
+
+    function funcs.getWaypoint(str)
+        local waypoints = funcs.readWaypoints()
+
+        for i, v in pairs(waypoints) do
+            if i == str then
+                return {Name = i, Position = v}
+            end
+        end
+    end
+
+    function funcs.saveWaypoint(str, pos, dont_update)
+        funcs.setupFolders(vars.foldername)
+
+        local loaded = httpService:JSONDecode(readfile(vars.foldername .. "/waypoints.json"))
+
+        loaded[tostring(str)] = {x = pos.X, y = pos.Y, z = pos.Z}
+
+        writefile(vars.foldername .. "/waypoints.json", httpService:JSONEncode(loaded))
+
+        vars.waypoints = funcs.convertWaypoints(loaded)
+
+        if not dont_update then
+            vars.waypointsDropdown.SetValues(funcs.displayWaypoints())
+            print("Down here")
+        end
+    end
+
+    function funcs.removeWaypoint(str)
+        funcs.setupFolders(vars.foldername)
+
+        local loaded = httpService:JSONDecode(readfile(vars.foldername .. "/waypoints.json"))
+
+        if loaded[tostring(str)] then
+            loaded[tostring(str)] = nil
+        end
+
+        writefile(vars.foldername .. "/waypoints.json", httpService:JSONEncode(loaded))
+
+        vars.waypoints = funcs.convertWaypoints(loaded)
+    end
+
+    function funcs.positionToString(pos)
+        return pos.X .. ", " .. pos.Y ..", " .. pos.Z
+    end
+
+    function funcs.displayWaypoints()
+        local waypoints = funcs.readWaypoints()
+        local newWaypoints = {}
+
+        for i, v in pairs(waypoints) do
+            local name = i .. " | " .. math.floor(v.X) .. ", " .. math.floor(v.Y) ..", " .. math.floor(v.Z)
+            table.insert(newWaypoints, name)
+        end
+
+        return newWaypoints
+    end
+
+    function funcs.isSpawned()
+        return not localPlayer.PlayerGui.Avatar.spawnButtons.Visible
+    end
+
+    function funcs.spawn()
+        replicatedStorage.remoteInterface.character.respawn:InvokeServer(1, 1, 1, 1, 1, 1, false)
+
+        repeat wait() until not funcs.isSpawned()
+
+        require(localPlayer.PlayerGui.Avatar.AvatarUI).hide()
+    end
+
+    function funcs.clone(tbl)
+        local new_tbl = {}
+
+        for i, v in pairs(tbl) do
+            new_tbl[i] = v
+        end
+
+        return new_tbl
+    end
+
+    function funcs.getIndexOfValueInTable(table, value)
+        local index = 0
+
+        for i, v in pairs(table) do
+            index += 1
+            if v == value then
+                return index
+            end
+        end
+    end
+
+    function funcs.getRandomOffset(max, min, fromZero)
+        local offset = math.random(min, max)
+
+        if offset >= -fromZero and offset <= fromZero then
+            if offset >= 0 then
+                offset = offset + (fromZero + 1)
+            else
+                offset = offset - (fromZero + 1)
+            end
+        end
+
+        return offset
+    end
+
+    function funcs.getAmountOfObjectsInTable(tbl)
+        local amount = 0
+
+        for i, v in pairs(tbl) do
+            amount += 1
+        end
+
+        return amount
+    end
+end
+
+if not getgenv().kwfunctions or not getgenv().kwfunctions.humanoidStateChange then
+    getgenv().kwfunctions = {}
+
+    for i, v in getgc() do
+        if type(v) == 'function' then
+            local name = debug.info(v, 'n')
+            if name == 'on_lua_error' then
+                hookfunction(v, function(...) end)
+            elseif name == 'humanoidStateChange' then
+                getgenv().kwfunctions.humanoidStateChange = v
+            elseif name == 'placeStructure' then
+                getgenv().kwfunctions.placeStructure = v
+            end
+        end
+    end
+end
+
+getgenv().library = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+local saveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua"))()
+local interfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
+
+local window = library:CreateWindow({
+    Title = "aura.solutions | The Survival Game",
+    SubTitle = "by tobias (@qxkya)",
+    TabWidth = 160,
+    Size = vars.isMobile and UDim2.fromOffset(500, 360) or UDim2.fromOffset(580, 460),
+    Acrylic = false,
+    Theme = "Dark",
+    MinimizeKey = Enum.KeyCode.Delete
+})
+
+local toggles = {}
+
+local playerTab = window:AddTab({Title = "Player", Icon = "user"}); do
+    local speedSection = playerTab:AddSection("Speed")
+    local movementSection = playerTab:AddSection("Movement")
+    local immunitySection = playerTab:AddSection("Immunity")
+    local autoPickupSection = playerTab:AddSection("Auto Pickup")
+
+    toggles.speed = speedSection:AddToggle("Speed", {
+        Title = "Speed",
+        Default = false,
+        Callback = function(value)
+            if kwconnections["speed"] then
+                kwconnections["speed"]:Disconnect()
+            end
+
+            if value then
+                kwconnections["speed"] = runService.Heartbeat:Connect(function(deltatime)
+                    local hum = funcs.getHumanoid()
+
+                    if hum and not hum.SeatPart then
+                        local movedir = localPlayer.Character.Humanoid.MoveDirection
+                        local speeddir = (movedir * deltatime) * vars.speed
+
+                        localPlayer.Character:TranslateBy(speeddir)
+                    end
+                end)
+            end
+        end
+    })
+
+    speedSection:AddSlider("Speed Value", {
+        Title = "Speed Value",
+        Default = 20,
+        Min = 0,
+        Max = 30,
+        Rounding = 0,
+        Callback = function(value)
+            vars.speed = value
+        end
+    })
+
+    movementSection:AddToggle("Infinite Stamina", {
+        Title = "Infinite Stamina",
+        Default = false,
+        Callback = function(value)
+            if kwconnections["infstamina"] then
+                kwconnections["infstamina"]:Disconnect()
+            end
+
+            if value then
+                kwconnections["infstamina"] = localPlayer:GetAttributeChangedSignal("stamina"):Connect(function()
+                    if localPlayer:GetAttribute("stamina") < 1 then
+                        localPlayer:SetAttribute("stamina", 1)
+                    end
+                end)
+            end
+        end
+    })
+
+    toggles.invisiblefly = movementSection:AddToggle("Invisible Fly", {
+        Title = "Invisible Fly",
+        Description = "Do NOT equip any item while flying!",
+        Default = false,
+        Callback = function(value)
+            if kwconnections["invisiblefly"] then
+                kwconnections["invisiblefly"]:Disconnect()
+            end
+
+            if not vars.invisiblefly and vars.playerClone then
+                vars.playerClone:Destroy()
+                vars.playerClone = nil
+            end
+
+            vars.invisiblefly = value
+
+            if value then
+                repeat wait() until localPlayer.Character
+
+                vars.playerClone = localPlayer.Character:Clone()
+                vars.playerClone.Parent = workspace
+        
+                while vars.invisiblefly do
+                    runService.Heartbeat:Wait()
+                    
+                    if vars.playerClone and vars.playerClone:FindFirstChild("HumanoidRootPart") then
+                        local root = funcs.getRoot()
+                        local hum = funcs.getHumanoid()
+    
+                        if not (root and hum and vars.playerClone) then
+                            return
+                        end
+    
+                        camera.CameraSubject = vars.playerClone and vars.playerClone:FindFirstChild("Humanoid") or localPlayer.Character.Humanoid
+    
+                        hum:ChangeState("Climbing")
+                        localPlayer.Character:PivotTo(vars.playerClone:GetPivot() + Vector3.new(0, 9999, 0))
+    
+                        root.Velocity = Vector3.zero
+    
+                        local lookPosition = camera.CFrame.Position + camera.CFrame.LookVector * 9999
+    
+                        vars.playerClone.HumanoidRootPart.CFrame = CFrame.new(vars.playerClone.HumanoidRootPart.Position, Vector3.new(lookPosition.X, vars.playerClone.HumanoidRootPart.Position.Y, lookPosition.Z))
+                        vars.playerClone.HumanoidRootPart.Anchored = true
+    
+                        vars.playerClone.HumanoidRootPart.CFrame = CFrame.new(vars.playerClone.HumanoidRootPart.Position + hum.MoveDirection / 10 * vars.flySpeed, Vector3.new(lookPosition.X, vars.playerClone.HumanoidRootPart.Position.Y, lookPosition.Z))
+    
+                        if userInputService:IsKeyDown(Enum.KeyCode.Space) then
+                            vars.playerClone.HumanoidRootPart.CFrame = CFrame.new(vars.playerClone.HumanoidRootPart.Position + Vector3.new(0, 0.2, 0), Vector3.new(lookPosition.X, vars.playerClone.HumanoidRootPart.Position.Y, lookPosition.Z))
+                        end
+    
+                        if userInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
+                            vars.playerClone.HumanoidRootPart.CFrame = CFrame.new(vars.playerClone.HumanoidRootPart.Position - Vector3.new(0, 0.2, 0), Vector3.new(lookPosition.X, vars.playerClone.HumanoidRootPart.Position.Y, lookPosition.Z))
+                        end
+                    end
+                end
+
+                camera.CameraSubject = funcs.getHumanoid()
+
+                if vars.playerClone then
+                    vars.landed = false
+
+                    local oldnofall = (toggles.nofalldamage.Value == true)
+
+                    if not oldnofall then
+                        toggles.nofalldamage:SetValue(true)
+                    end
+        
+                    localPlayer.Character:PivotTo(vars.playerClone:GetPivot())
+        
+                    vars.playerClone:Destroy()
+                    vars.playerClone = nil
+        
+                    repeat wait() until vars.landed or (funcs.getHumanoid() and funcs.getHumanoid().FloorMaterial ~= Enum.Material.Air)
+        
+                    vars.landed = false
+        
+                    if not oldnofall then
+                        toggles.nofalldamage:SetValue(false)
+                    end
+                end
+            end
+        end
+    })
+
+    movementSection:AddSlider("Invisible Fly Speed Value", {
+        Title = "Invisible Fly Speed Value",
+        Default = 4,
+        Min = 0.5,
+        Max = 8,
+        Rounding = 2,
+        Callback = function(value)
+            vars.flySpeed = value
+        end
+    })
+
+    toggles.nofalldamage = immunitySection:AddToggle("No Fall Damage", {
+        Title = "No Fall Damage",
+        Default = false,
+        Callback = function(value)
+            if value then
+                vars.nofallFunction = hookfunction(getgenv().kwfunctions.humanoidStateChange, function()
+                    if vars.playerClone then
+                        vars.landed = true
+                    end
+
+                    return
+                end)
+            elseif vars.nofallFunction then
+                hookfunction(getgenv().kwfunctions.humanoidStateChange, vars.nofallFunction)
+                vars.nofallFunction = nil
+            end
+        end
+    })
+
+    toggles.autopickup = autoPickupSection:AddToggle("Auto Pickup", {
+        Title = "Auto Pickup",
+        Default = false,
+        Callback = function(value)
+            if kwconnections["autopickup"] then
+                kwconnections["autopickup"]:Disconnect()
+            end
+
+            if value then
+                local lastpickup = 0
+
+                kwconnections["autopickup"] = runService.Heartbeat:Connect(function(deltatime)
+                    if tick() - lastpickup >= 0.15 then
+                        lastpickup = tick()
+
+                        for i, v in pairs(funcs.getDroppedItemsInRange(vars.pickup_distance)) do
+                            pickupRemote:FireServer(v)
+                        end
+                    end
+                end)
+            end
+        end
+    })
+
+    autoPickupSection:AddToggle("Auto Pickup Ignore Client Items", {
+        Title = "Ignore Client Items",
+        Default = vars.ignoreClientItems,
+        Callback = function(value)
+            vars.ignoreClientItems = value
+        end
+    })
+end
+
+local killAuraTab = window:AddTab({Title = "Kill Aura", Icon = "swords"}); do
+    local mainSection = killAuraTab:AddSection("Main")
+    local checksSection = killAuraTab:AddSection("Checks")
+    local settingsSection = killAuraTab:AddSection("Settings")
+
+    local floatpart = nil
+    local highlight = nil
+    local isalive = false
+    local lastcheck = 0
+    local lasthit = 0
+    local connection
+    local target
+    local tool
+
+    toggles.killaura = mainSection:AddToggle("Kill Aura", {
+        Title = "Enable",
+        Default = false,
+        Callback = function(value)
+            vars.killaura = value
+            target = nil
+
+            if value then
+                connection = runService.Heartbeat:Connect(function()
+                    if not isalive then
+                        target = nil
+
+                        if floatpart then
+                            floatpart:Destroy()
+                            floatpart = nil
+                        end
+
+                        if highlight then
+                            highlight.Parent = nil
+                            highlight.Adornee = nil
+                        end
+                    end
+
+                    if target and not floatpart then
+                        floatpart = Instance.new("Part")
+                        floatpart.Size = Vector3.new(3, 0.3, 3)
+                        floatpart.Transparency = 1
+                        floatpart.Parent = workspace
+                        floatpart.Anchored = true
+                        floatpart.CanCollide = true
+                    elseif floatpart then
+                        floatpart:Destroy()
+                        floatpart = nil
+                    end
+
+                    if tick() - lastcheck > 0.25 and localPlayer.Character then
+                        local targethealth = target and funcs.getHealth(target) or 0
+                        local health = funcs.getHealth(localPlayer)
+                        isalive = health > 0 and true or false
+                        lastcheck = tick()
+
+                        local closest, distance = funcs.getClosestPlayer(localPlayer.Character:GetPivot().Position, {}, true)
+
+                        if not highlight and vars.kill_highlight then
+                            highlight = Instance.new("Highlight")
+                            highlight.FillColor = vars.kill_highlight_color
+                        end
+                        
+                        if closest and distance <= vars.kill_distance then
+                            if not vars.locktarget or not target or (targethealth <= 0) then
+                                target = closest
+                            end
+
+                            if highlight then
+                                highlight.FillColor = vars.kill_highlight_color
+                            end
+
+                            if highlight and vars.kill_highlight and target.Character and highlight.Parent ~= target.Character then
+                                pcall(function()
+                                    highlight.Parent = target.Character
+                                end)
+                                highlight.Adornee = target.Character
+                            elseif not vars.kill_highlight then
+                                if highlight then
+                                    highlight:Destroy()
+                                    highlight = nil
+                                end
+                            end
+                        end
+
+                        tool = funcs.getBestTool("Melee Weapon", "meleeDamage")
+                    end
+
+                    if target then
+                        local root = funcs.getRoot()
+                        local t_root = target.Character and funcs.getRoot(target)
+
+                        local hum = funcs.getHumanoid()
+                        local t_hum = funcs.getHumanoid(target)
+
+                        if root and t_root and hum and t_hum and not hum.SeatPart then
+                            local dist = (t_root.Position - root.Position).Magnitude
+
+                            if dist <= vars.kill_distance or vars.locktarget then
+                                if vars.spectate and not vars.invisiblefly then
+                                    camera.CameraSubject = t_hum
+                                end
+
+                                if vars.kill_teleport then
+                                    local offset = vars.kill_distance > 11 and 9 or vars.kill_distance - 2
+                                    local position
+                                    
+                                    if vars.bothteleports or vars.kill_teleport_type == "Above" then
+                                        position = CFrame.new(target.Character:GetPivot().Position) + Vector3.new(funcs.getRandomOffset(offset, -offset, 4), 9, funcs.getRandomOffset(offset, -offset, 4))
+                                    end
+                                    
+                                    if vars.bothteleports or vars.kill_teleport_type == "Inside" then
+                                        position = CFrame.new(target.Character:GetPivot().Position)
+                                    end
+
+                                    if floatpart then
+                                        floatpart.Position = position.Position - Vector3.new(0, 2.4, 0)
+                                    end
+
+                                    if hum then
+                                        hum:ChangeState("Climbing")
+                                    end
+
+                                    root.CFrame = position
+                                    root.Velocity = Vector3.zero
+                                end
+
+                                return
+                            end
+                        end
+
+                        if hum and not vars.invisiblefly then
+                            camera.CameraSubject = hum
+                        end
+
+                        target = nil
+
+                        if highlight then
+                            highlight:Destroy()
+                            highlight = nil
+                        end
+                    else
+                        local hum = funcs.getHumanoid()
+
+                        if hum and not vars.invisiblefly then
+                            camera.CameraSubject = hum
+                        end
+
+                        if highlight then
+                            highlight:Destroy()
+                            highlight = nil
+                        end
+
+                        target = nil
+                    end
+                end)
+
+                repeat task.wait()
+                    local canhit = vars.disableDelay or (tick() - lasthit > 0.05)
+
+                    if target and target.Character and tool and canhit then
+                        replicatedStorage.remoteInterface.interactions.meleePlayer:FireServer(tool, target)
+                        lasthit = tick()
+                    end
+                until not vars.killaura
+
+                connection:Disconnect()
+
+                local hum = funcs.getHumanoid()
+
+                if hum then
+                    camera.CameraSubject = hum
+                end
+
+                if highlight then
+                    highlight:Destroy()
+                    highlight = nil
+                end
+
+                if floatpart then
+                    floatpart:Destroy()
+                    floatpart = nil
+                end
+            end
+        end
+    })
+
+    settingsSection:AddToggle("Kill Aura Teleport", {
+        Title = "Teleport",
+        Default = vars.kill_teleport,
+        Callback = function(value)
+            vars.kill_teleport = value
+        end
+    })
+
+    settingsSection:AddToggle("Kill Aura Spectate", {
+        Title = "Spectate",
+        Default = vars.spectate,
+        Callback = function(value)
+            vars.spectate = value
+
+            local hum = funcs.getHumanoid()
+
+            if not value and hum then
+                camera.CameraSubject = hum
+            end
+        end
+    })
+
+    settingsSection:AddToggle("Kill Aura Target Lock", {
+        Title = "Target Lock",
+        Default = vars.locktarget,
+        Callback = function(value)
+            vars.locktarget = value
+        end
+    })
+
+    settingsSection:AddToggle("Kill Aura Disable Hit Delay", {
+        Title = "Disable Hit Delay",
+        Default = vars.disableDelay,
+        Callback = function(value)
+            vars.disableDelay = value
+        end
+    })
+
+    settingsSection:AddDropdown("Kill Aura Teleport Type", {
+        Title = "Teleport Type",
+        Default = "Above",
+        Values = {"Above", "Inside"},
+        Callback = function(value)
+            vars.kill_teleport_type = value
+        end
+    })
+
+    checksSection:AddToggle("Kill Aura Teamcheck", {
+        Title = "Teamcheck",
+        Default = vars.teamcheck,
+        Callback = function(value)
+            vars.teamcheck = value
+            target = nil
+        end
+    })
+
+    checksSection:AddToggle("Kill Aura Allies Check", {
+        Title = "Allies Check",
+        Default = vars.alliesCheck,
+        Callback = function(value)
+            vars.alliesCheck = value
+            target = nil
+        end
+    })
+
+    checksSection:AddToggle("Kill Aura Enemies Only", {
+        Title = "Enemies Only",
+        Default = vars.enemiesOnly,
+        Callback = function(value)
+            vars.enemiesOnly = value
+            target = nil
+        end
+    })
+
+    settingsSection:AddToggle("Kill Aura Highlight", {
+        Title = "Highlight",
+        Default = vars.kill_highlight,
+        Callback = function(value)
+            vars.kill_highlight = value
+        end
+    })
+
+    settingsSection:AddColorpicker("Kill Aura Highlight Colorpicker", {
+        Title = "Highlight Color",
+        Default = Color3.fromRGB(255, 0, 0),
+        Callback = function(value)
+            vars.kill_highlight_color = value
+        end
+    })
+end
+
+local aurasTab = window:AddTab({Title = "Auras", Icon = "axe"}); do
+    local chopAuraSection = aurasTab:AddSection("Chop Aura")
+    local mineAuraSection = aurasTab:AddSection("Mine Aura")
+    local huntAuraSection = aurasTab:AddSection("Hunt Aura")
+    local bossAuraSection = aurasTab:AddSection("Boss Aura")
+
+    local isalive = false
+    local lastcheck = 0
+    local connection
+    
+    local choppablehighlight = nil
+    local lastchop = 0
+    local choppable
+    local axe
+
+    local mineablehighlight = nil
+    local lastmine = 0
+    local mineable
+    local pickaxe
+
+    local animalhighlight = nil
+    local lastaihit = 0
+    local animal
+    local sword
+
+    local bosshighlight = nil
+    local lastbosshit = 0
+    local boss
+
+    local function disable()
+        if not (vars.mineaura or vars.chopaura or vars.huntaura) then
+            connection:Disconnect(); connection = nil
+        end
+
+        if not vars.chopaura then
+            if choppablehighlight then
+                choppablehighlight:Destroy()
+                choppablehighlight = nil
+            end
+        end
+
+        if not vars.mineaura then
+            if mineablehighlight then
+                mineablehighlight:Destroy()
+                mineablehighlight = nil
+            end
+        end
+
+        if not vars.huntaura then
+            if animalhighlight then
+                animalhighlight:Destroy()
+                animalhighlight = nil
+            end
+        end
+    end
+
+    local function check()
+        if not isalive then
+            choppable = nil; mineable = nil; animal = nil; boss = nil
+
+            if mineablehighlight then
+                mineablehighlight.Adornee = nil
+                mineablehighlight.Parent = nil
+            end
+
+            if choppablehighlight then
+                choppablehighlight.Adornee = nil
+                choppablehighlight.Parent = nil
+            end
+
+            if animalhighlight then
+                animalhighlight.Adornee = nil
+                animalhighlight.Parent = nil
+            end
+
+            if bosshighlight then
+                bosshighlight.Adornee = nil
+                bosshighlight.Parent = nil
+            end
+        end
+
+        if tick() - lastcheck > 0.25 then
+            local health = funcs.getHealth(localPlayer)
+            isalive = health > 0 and true or localPlayer.Character and true or false
+            lastcheck = tick()
+
+            if not isalive then return end
+
+            local pos = localPlayer.Character:GetPivot().Position
+
+            if vars.chopaura then
+                local a, b = funcs.getClosestChoppable(pos)
+
+                if not choppablehighlight and vars.chop_highlight then
+                    choppablehighlight = Instance.new("Highlight")
+                end
+
+                if a and b <= vars.chop_distance then
+                    choppable = a
+
+                    if choppablehighlight and vars.chop_highlight and choppable and choppablehighlight.Parent ~= choppable then
+                        pcall(function()
+                            choppablehighlight.Parent = choppable
+                        end)
+
+                        choppablehighlight.Adornee = choppable
+                    end
+                elseif choppablehighlight then
+                    choppable = nil
+
+                    choppablehighlight:Destroy()
+                    choppablehighlight = nil
+                end
+
+                axe = funcs.getBestTool("Axe", "axeStrength")
+            end
+
+            if vars.mineaura then
+                local a, b = funcs.getClosestMineable(pos)
+
+                if not mineablehighlight and vars.mine_highlight then
+                    mineablehighlight = Instance.new("Highlight")
+                end
+
+                if a and b <= vars.mine_distance then
+                    mineable = a
+
+                    if mineablehighlight and vars.mine_highlight and mineable and mineablehighlight.Parent ~= mineable then
+                        pcall(function()
+                            mineablehighlight.Parent = mineable
+                        end)
+                        
+                        mineablehighlight.Adornee = mineable
+                    end
+                elseif mineablehighlight then
+                    mineable = nil
+
+                    mineablehighlight:Destroy()
+                    mineablehighlight = nil
+                end
+
+                pickaxe = funcs.getBestTool("Pickaxe", "pickaxeStrength")
+            end
+
+            if vars.huntaura then
+                local a, b = funcs.getClosestAnimal(pos, vars.ignore_helpers)
+
+                if not animalhighlight and vars.aihit_highlight then
+                    animalhighlight = Instance.new("Highlight")
+                end
+
+                if a and b <= vars.aihit_distance then
+                    animal = a
+
+                    if animalhighlight and vars.aihit_highlight and animal and animalhighlight.Parent ~= animal then
+                        pcall(function()
+                            animalhighlight.Parent = animal
+                        end)
+                        
+                        animalhighlight.Adornee = animal
+                    end
+                elseif animalhighlight then
+                    animal = nil
+
+                    animalhighlight:Destroy()
+                    animalhighlight = nil
+                end
+            end
+
+            if vars.bossaura then
+                local a = funcs.getBoss(); local b = a and (localPlayer.Character:GetPivot().Position - a:GetPivot().Position).Magnitude
+
+                if not bosshighlight and vars.boss_highlight then
+                    bosshighlight = Instance.new("Highlight")
+                end
+
+                if a and b <= vars.boss_distance then
+                    boss = a
+
+                    if bosshighlight and vars.boss_highlight and boss and bosshighlight.Parent ~= boss then
+                        pcall(function()
+                            bosshighlight.Parent = boss
+                        end)
+                        
+                        bosshighlight.Adornee = boss
+                    end
+                elseif bosshighlight then
+                    boss = nil
+
+                    bosshighlight:Destroy()
+                    bosshighlight = nil
+                end
+            end
+
+            if vars.bossaura or vars.huntaura then
+                sword = funcs.getBestTool("Melee Weapon", "meleeDamage")
+            end
+        end
+    end
+
+    chopAuraSection:AddToggle("Chop Aura", {
+        Title = "Chop Aura",
+        Default = false,
+        Callback = function(value)
+            vars.chopaura = value
+
+            if value then
+                if not connection then
+                    connection = runService.Heartbeat:Connect(check)
+                end
+
+                repeat task.wait()
+                    local canhit = (tick() - lastchop > 0.1)
+
+                    if choppable and axe and canhit then
+                        replicatedStorage.remoteInterface.interactions.chop:FireServer(axe, choppable, choppable:GetAttribute("cf"))
+
+                        lastchop = tick()
+                    end
+                until not vars.chopaura
+
+                disable()
+            end
+        end
+    })
+
+    mineAuraSection:AddToggle("Mine Aura", {
+        Title = "Mine Aura",
+        Default = false,
+        Callback = function(value)
+            vars.mineaura = value
+
+            if value then
+                if not connection then
+                    connection = runService.Heartbeat:Connect(check)
+                end
+
+                repeat task.wait()
+                    local canhit = (tick() - lastmine > 0.01)
+
+                    if mineable and pickaxe and canhit then
+                        replicatedStorage.remoteInterface.interactions.mine:FireServer(axe, mineable, mineable:GetAttribute("cf"))
+
+                        lastmine = tick()
+                    end
+                until not vars.mineaura
+
+                disable()
+            end
+        end
+    })
+
+    toggles.huntaura = huntAuraSection:AddToggle("Hunt Aura", {
+        Title = "Hunt Aura",
+        Default = false,
+        Callback = function(value)
+            vars.huntaura = value
+
+            if value then
+                if not connection then
+                    connection = runService.Heartbeat:Connect(check)
+                end
+
+                repeat task.wait()
+                    local canhit = (tick() - lastaihit > 0.1)
+
+                    if animal and sword and canhit then
+                        replicatedStorage.remoteInterface.interactions.meleeAI:FireServer(sword, animal)
+
+                        lastaihit = tick()
+                    end
+                until not vars.huntaura
+
+                disable()
+            end
+        end
+    })
+
+    toggles.bossaura = bossAuraSection:AddToggle("Boss Aura", {
+        Title = "Boss Aura",
+        Default = false,
+        Callback = function(value)
+            vars.bossaura = value
+
+            if value then
+                if not connection then
+                    connection = runService.Heartbeat:Connect(check)
+                end
+
+                repeat task.wait()
+                    local canhit = (tick() - lastbosshit > 0.1)
+
+                    if boss and sword and canhit then
+                        replicatedStorage.remoteInterface.interactions.meleeAI:FireServer(sword, boss)
+
+                        lastbosshit = tick()
+                    end
+                until not vars.bossaura
+
+                disable()
+            end
+        end
+    })
+
+    huntAuraSection:AddToggle("Hunt Aura Ignore Helpers", {
+        Title = "Ignore Helpers (NPCs)",
+        Default = true,
+        Callback = function(value)
+            vars.ignore_helpers = value
+        end
+    })
+
+    chopAuraSection:AddToggle("Chop Aura Highlight", {
+        Title = "Highlight Choppables",
+        Default = true,
+        Callback = function(value)
+            vars.chop_highlight = value
+
+            if choppablehighlight then
+                choppablehighlight:Destroy()
+                choppablehighlight = nil
+            end
+        end
+    })
+
+    mineAuraSection:AddToggle("Mine Aura Highlight", {
+        Title = "Highlight Mineables",
+        Default = true,
+        Callback = function(value)
+            vars.mine_highlight = value
+
+            if mineablehighlight then
+                mineablehighlight:Destroy()
+                mineablehighlight = nil
+            end
+        end
+    })
+
+    huntAuraSection:AddToggle("Hunt Aura Highlight", {
+        Title = "Highlight Animals",
+        Default = true,
+        Callback = function(value)
+            vars.aihit_highlight = value
+
+            if animalhighlight then
+                animalhighlight:Destroy()
+                animalhighlight = nil
+            end
+        end
+    })
+
+    bossAuraSection:AddToggle("Boss Aura Highlight", {
+        Title = "Highlight Boss",
+        Default = true,
+        Callback = function(value)
+            vars.boss_highlight = value
+
+            if bosshighlight then
+                bosshighlight:Destroy()
+                bosshighlight = nil
+            end
+        end
+    })
+
+    chopAuraSection:AddSlider("Chop Aura Range", {
+        Title = "Chop Aura Range",
+        Default = 40,
+        Min = 0,
+        Max = 40,
+        Rounding = 0,
+        Callback = function(value)
+            vars.chop_distance = value
+        end
+    })
+
+    mineAuraSection:AddSlider("Mine Aura Range", {
+        Title = "Mine Aura Range",
+        Default = 25,
+        Min = 0,
+        Max = 25,
+        Rounding = 0,
+        Callback = function(value)
+            vars.mine_distance = value
+        end
+    })
+
+    huntAuraSection:AddSlider("Hunt Aura Range", {
+        Title = "Hunt Aura Range",
+        Default = 25,
+        Min = 0,
+        Max = 25,
+        Rounding = 0,
+        Callback = function(value)
+            vars.hunt_distance = value
+        end
+    })
+
+    bossAuraSection:AddSlider("Boss Aura Range", {
+        Title = "Boss Aura Range",
+        Default = 25,
+        Min = 0,
+        Max = 25,
+        Rounding = 0,
+        Callback = function(value)
+            vars.boss_distance = value
+        end
+    })
+end
+
+local visualsTab = window:AddTab({Title = "Visuals", Icon = "eye"}); do
+    local playerVisualsSection = visualsTab:AddSection("Player Visuals")
+    local oreVisualsSection = visualsTab:AddSection("Ore Visuals")
+
+    local connection = nil
+    local lastUpdate = 0
+
+    playerVisualsSection:AddToggle("Visuals Toggle", {
+        Title = "Enable Player Visuals",
+        Default = false,
+        Callback = function(value)
+            if kwconnections["esp"] then
+                kwconnections["esp"]:Disconnect()
+                kwconnections["esp"] = nil
+            end
+
+            if value then
+                local function create(plr)
+                    local text = Drawing.new("Text")
+                    text.Size = 16
+                    text.Outline = true
+                    text.Visible = false
+                    text.Center = true
+                    text.Text = tostring(plr)
+                    
+                    vars.esps[tostring(plr)] = {Player = plr, Text = text, Disable = function()
+                        text:Destroy()
+                        vars.esps[tostring(plr)] = nil
+                    end}
+                end
+
+                local function update(esp)
+                    if not players:FindFirstChild(tostring(esp.Player)) then
+                        esp.Disable()
+                    end
+
+                    if not esp.Player.Character then
+                        esp.Text.Visible = false; return
+                    end
+
+                    local position, visible = camera:WorldToViewportPoint(esp.Player.Character:GetPivot().Position)
+
+                    if not visible then
+                        esp.Text.Visible = false; return
+                    end
+
+                    esp.Text.Visible = true
+                    esp.Text.Position = Vector2.new(position.X, position.Y)
+                    esp.Text.Color = vars.coloredEsp and Color3.new(esp.Player.TeamColor.r, esp.Player.TeamColor.g, esp.Player.TeamColor.b) or Color3.new(1, 1, 1)
+                end
+
+                for i, v in pairs(players:GetChildren()) do
+                    if v ~= localPlayer and v.Character then
+                        if vars.espAllycheck and funcs.isAlly(v) then
+                            continue
+                        end
+
+                        if vars.espTeamcheck and team == v.TeamColor and not v.Neutral then
+                            continue
+                        end
+
+                        create(v)
+                    end
+                end
+
+                connection = runService.Stepped:Connect(function()
+                    if tick() - lastUpdate < 0.2 then
+                        return
+                    end
+
+                    lastUpdate = tick()
+
+                    local team = localPlayer.TeamColor
+
+                    for i, v in pairs(vars.esps) do
+                        if v.Player and v.Player.Character then
+                            if vars.espAllycheck and funcs.isAlly(v.Player) then
+                                v.Disable()
+                            end
+
+                            if vars.espTeamcheck and team == v.Player.TeamColor and not v.Player.Neutral then
+                                v.Disable()
+                            end
+                        end
+                    end
+                    
+                    for i, v in pairs(players:GetChildren()) do
+                        if v ~= localPlayer and v.Character and not vars.esps[tostring(v)] then
+                            if vars.espAllycheck and funcs.isAlly(v) then
+                                continue
+                            end
+
+                            if vars.espTeamcheck and team == v.TeamColor and not v.Neutral then
+                                continue
+                            end
+
+                            create(v)
+                        end
+                    end
+                end)
+
+                kwconnections["esp"] = runService.Heartbeat:Connect(function()
+                    for i, v in pairs(vars.esps) do
+                        update(v)
+                    end
+                end)
+
+                repeat wait() until not kwconnections["esp"]
+
+                for i, v in pairs(vars.esps) do
+                    v.Disable()
+                end
+    
+                if connection then
+                    connection:Disconnect()
+                end
+            end
+        end
+    })
+
+    local connection
+
+    oreVisualsSection:AddToggle("Ore Visuals Toggle", {
+        Title = "Enable Ore Visuals",
+        Default = false,
+        Callback = function(value)
+            if kwconnections["oreesp"] then
+                kwconnections["oreesp"]:Disconnect()
+                kwconnections["oreesp"] = nil
+            end
+
+            if value then
+                local function create(ore)
+                    local text = Drawing.new("Text")
+                    text.Size = 16
+                    text.Outline = true
+                    text.Visible = false
+                    text.Center = true
+                    text.Text = tostring(ore)
+                    
+                    local x = ore:GetPivot().Position.X
+
+                    vars.oreesps[x] = {Ore = ore, Text = text, Disable = function()
+                        text:Destroy()
+                        vars.oreesps[x] = nil
+                    end}
+                end
+
+                local function update(esp)
+                    if not esp.Ore then
+                        esp.Disable()
+                    end
+
+                    local position, visible = camera:WorldToViewportPoint(esp.Ore:GetPivot().Position)
+
+                    if not visible or funcs.getHealth(esp.Ore) <= 0 then
+                        esp.Text.Visible = false; return
+                    end
+
+                    esp.Text.Visible = true
+                    esp.Text.Position = Vector2.new(position.X, position.Y)
+                    esp.Text.Color = Color3.fromRGB(255, 255, 255)
+                end
+
+                local lastcheck = 0
+
+                connection = runService.Stepped:Connect(function()
+                    if tick() - lastcheck < 0.25 then
+                        return
+                    end
+
+                    for _, v in pairs(worldResources.mineable:GetChildren()) do
+                        for _, ore in pairs(v:GetChildren()) do
+                            local found = false
+
+                            for i, esp in pairs(vars.oreesps) do
+                                if esp.Ore == ore then
+                                    found = true
+                                    break
+                                end
+                            end
+
+                            if found or vars.ignoreores[tostring(ore)] then
+                                continue
+                            end
+
+                            create(ore)
+                        end
+                    end
+
+                    lastcheck = tick()
+                end)
+
+                kwconnections["oreesp"] = runService.Heartbeat:Connect(function()
+                    for i, v in pairs(vars.oreesps) do
+                        if not v.Ore or vars.ignoreores[tostring(v.Ore)] then
+                            v.Disable(); continue
+                        end
+
+                        update(v)
+                    end
+                end)
+
+                repeat wait() until not kwconnections["oreesp"]
+    
+                for i, v in pairs(vars.oreesps) do
+                    v.Disable()
+                end
+    
+                if connection then
+                    connection:Disconnect()
+                end
+            end
+        end
+    })
+
+    oreVisualsSection:AddDropdown("Visuals Ore Ignore", {
+        Title = "Ignore Ores",
+        Values = vars.ores,
+        Multi = true,
+        Default = {},
+        Callback = function(value)
+            if not value then
+                return
+            end
+
+            vars.ignoreores = value
+        end
+    })
+
+    playerVisualsSection:AddToggle("Visuals Teamcheck", {
+        Title = "Teamcheck",
+        Default = false,
+        Callback = function(value)
+            vars.espTeamcheck = value
+        end
+    })
+
+    playerVisualsSection:AddToggle("Visuals Ally Check", {
+        Title = "Ally Check",
+        Default = false,
+        Callback = function(value)
+            vars.espAllycheck = value
+        end
+    })
+
+    playerVisualsSection:AddToggle("Visuals Colored", {
+        Title = "Colored Visuals",
+        Default = false,
+        Callback = function(value)
+            vars.coloredEsp = value
+        end
+    })
+end
+
+local boatTab = window:AddTab({Title = "Boat", Icon = "sailboat"}); do
+    local mainSection = boatTab:AddSection("Main")
+    local locationsSection = boatTab:AddSection("Locations")
+    local miscSection = boatTab:AddSection("Miscellaneous")
+
+    local originalY = nil
+    local boatCFrame = nil
+
+    toggles.boatspeed = mainSection:AddToggle("Boat Speed", {
+        Title = "Boat Speed",
+        Default = false,
+        Callback = function(value)
+            if kwconnections["boat_hover"]then
+                kwconnections["boat_hover"]:Disconnect()
+                kwconnections["boat_hover"] = nil
+            end
+
+            originalY = nil
+            boatCFrame = nil
+
+            if value then
+                kwconnections["boat_hover"] = runService.Stepped:Connect(function()
+                    if vars.boatteleporting then
+                        boatCFrame = nil; return
+                    end
+
+                    local humanoid = funcs.getHumanoid(localPlayer)
+                    local boat = funcs.getCurrentBoat()
+                
+                    if not boat or not humanoid then
+                        originalY = nil
+                        boatCFrame = nil
+                        return
+                    end
+                
+                    if not boatCFrame then
+                        boatCFrame = boat:GetPivot()
+                    end
+                
+                    if not originalY then
+                        originalY = boatCFrame.Position.Y
+                        print(originalY)
+                    end
+                
+                    for i,v in pairs(boat:GetDescendants()) do
+                        if v:IsA("Part") or v:IsA("MeshPart") or v:IsA("Union") then
+                            v.Velocity = Vector3.new(0,0,0)
+                        end
+                    end
+                
+                    boat:PivotTo(boatCFrame)
+                
+                    local extraY = 0
+                
+                    if humanoid.Parent:GetAttribute("inTerrain") then
+                        if boatCFrame.Position.Y < originalY + 3 then
+                            extraY = 3
+                        else
+                            extraY = 0
+                        end
+                    else
+                        extraY = 0
+                        boatCFrame = boatCFrame - Vector3.new(0, boatCFrame.Position.Y - originalY, 0)
+                    end
+                
+                    boatCFrame = boatCFrame + Vector3.new(0, extraY, 0) + humanoid.MoveDirection * 5
+                end)
+            end
+        end
+    })
+
+    for i, v in pairs(vars.locations) do
+        locationsSection:AddButton({
+            Title = i,
+            Callback = function()
+                if vars.boatteleporting then
+                    library:Notify({
+                        Title = "Error",
+                        Content = "You are already teleporting!",
+                        Duration = 3
+                    })
+                    return
+                end
+
+                local root = funcs.getRoot()
+                local hum = funcs.getHumanoid()
+    
+                if not root or not hum then
+                    return
+                end
+    
+                if not hum.SeatPart or not hum.SeatPart.Parent:IsDescendantOf(workspace.boats) then
+                    library:Notify({
+                        Title = "Error",
+                        Content = "You have to sit in a boat!",
+                        Duration = 5
+                    })
+                    return
+                end
+    
+                local boat = hum.SeatPart.Parent
+
+                if toggles.boatspeed.Value then
+                    vars.boatteleporting = true
+                    wait(0.1)
+                end
+
+                boat:PivotTo(CFrame.new(v))
+
+                if toggles.boatspeed.Value then
+                    wait(0.3)
+                    vars.boatteleporting = false
+                end
+            end
+        })
+    end
+
+    miscSection:AddButton({
+        Title = "Sit In Random Boat",
+        Callback = function(value)
+            local root = funcs.getRoot()
+
+            if not root then
+                return
+            end
+
+            local boats = {}
+            local boat
+
+            for i, v in pairs(workspace.boats:GetChildren()) do
+                local seat = v:FindFirstChild("VehicleSeat")
+
+                if seat and not seat.Occupant then
+                    table.insert(boats, v)
+                end
+            end
+
+            if #boats == 0 then
+                library:Notify({
+                    Title = "Error",
+                    Content = "Failed to find a boat!",
+                    Duration = 5
+                })
+                return
+            end
+
+            boat = boats[math.random(1, #boats)]
+
+            localPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(boat.VehicleSeat.Position) + Vector3.new(0, 2, 0)
+            wait(0.2)
+            firetouchinterest(boat.VehicleSeat, root, 1)
+        end
+    })
+
+    miscSection:AddButton({
+        Title = "Sit In Closest Boat",
+        Callback = function(value)
+            local root = funcs.getRoot()
+
+            if not root then
+                return
+            end
+
+            local boat, distance = nil, math.huge
+
+            for i, v in pairs(workspace.boats:GetChildren()) do
+                local seat = v:FindFirstChild("VehicleSeat")
+
+                if seat and not seat.Occupant then
+                    local magnitude = (root.Position - seat.Position).Magnitude
+
+                    if magnitude < distance then
+                        boat = v; distance = magnitude
+                    end
+                end
+            end
+
+            if not boat then
+                library:Notify({
+                    Title = "Error",
+                    Content = "Failed to find a boat!",
+                    Duration = 5
+                })
+                return
+            end
+
+            localPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(boat.VehicleSeat.Position) + Vector3.new(0, 2, 0)
+            wait(0.2)
+            firetouchinterest(boat.VehicleSeat, root, 1)
+            firetouchinterest(boat.VehicleSeat, localPlayer.Character.LeftLowerLeg, 1)
+            firetouchinterest(boat.VehicleSeat, localPlayer.Character.LeftFoot, 1)
+        end
+    })
+
+    miscSection:AddButton({
+        Title = "Teleport to Random Player",
+        Callback = function(value)
+            local root = funcs.getRoot()
+            local hum = funcs.getHumanoid()
+
+            if not root or not hum then
+                return
+            end
+
+            if not hum.SeatPart or not hum.SeatPart.Parent:IsDescendantOf(workspace.boats) then
+                library:Notify({
+                    Title = "Error",
+                    Content = "You have to sit in a boat!",
+                    Duration = 5
+                })
+                return
+            end
+
+            local players_t = {}
+            local player
+
+            for i, v in pairs(players:GetChildren()) do
+                if v ~= localPlayer and v.Character and v.Character.Humanoid.Health > 0 then
+                    table.insert(players_t, v)
+                end
+            end
+
+            if #players_t == 0 then
+                library:Notify({
+                    Title = "Error",
+                    Content = "Failed to find a player!",
+                    Duration = 5
+                })
+            end
+
+            player = players_t[math.random(1, #players_t)]
+
+            local boat = hum.SeatPart.Parent
+
+            local position = player.Character.HumanoidRootPart.Position - Vector3.new(0, player.Character.HumanoidRootPart.Position.Y, 0) + Vector3.new(0, boat:GetPivot().Position.Y, 0)
+
+            task.spawn(function()
+                repeat task.wait()
+                    if not hum.SeatPart then break end
+                    boat:PivotTo(CFrame.new(position) + Vector3.new(0, 3, 0))
+                until false
+            end)
+
+            localPlayer:GetAttributeChangedSignal(tpCheckTimeAttribute):Wait()
+
+            wait(0.15)
+
+            hum.Sit = false
+
+            wait(0.1)
+
+            if not boat then return end
+
+            localPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(boat.NoCharacterBuild.Position)
+
+            wait(1)
+
+            if player.Character then
+                localPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(player.Character:GetPivot().Position)
+            end
+        end
+    })
+
+    miscSection:AddButton({
+        Title = "Teleport to Closest Player",
+        Callback = function(value)
+            local root = funcs.getRoot()
+            local hum = funcs.getHumanoid()
+
+            if not root or not hum then
+                return
+            end
+
+            if not hum.SeatPart or not hum.SeatPart.Parent:IsDescendantOf(workspace.boats) then
+                library:Notify({
+                    Title = "Error",
+                    Content = "You have to sit in a boat!",
+                    Duration = 5
+                })
+                return
+            end
+
+            local player = funcs.getClosestPlayer()
+            local boat = hum.SeatPart.Parent
+
+            if not player then
+                library:Notify({
+                    Title = "Error",
+                    Content = "Failed to find a player!",
+                    Duration = 5
+                })
+                return
+            end
+
+            local position = player.Character.HumanoidRootPart.Position - Vector3.new(0, player.Character.HumanoidRootPart.Position.Y, 0) + Vector3.new(0, boat:GetPivot().Position.Y, 0)
+
+            task.spawn(function()
+                repeat task.wait()
+                    if not hum.SeatPart then break end
+                    boat:PivotTo(CFrame.new(position) + Vector3.new(0, 3, 0))
+                until false
+            end)
+
+            localPlayer:GetAttributeChangedSignal(tpCheckTimeAttribute):Wait()
+
+            wait(0.15)
+
+            hum.Sit = false
+
+            wait(0.1)
+
+            if not boat then return end
+
+            localPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(boat.NoCharacterBuild.Position)
+
+            wait(1)
+
+            localPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(player.Character:GetPivot().Position)
+        end
+    })
+end
+
+local autofarmTab = window:AddTab({Title = "Autofarm", Icon = "locate-fixed"}); do
+    local mainSection = autofarmTab:AddSection("Main")
+    local waypointsSection = autofarmTab:AddSection("Waypoints")
+    local miscSection = autofarmTab:AddSection("Miscellaneous")
+    local settingsSection = autofarmTab:AddSection("Settings")
+
+    toggles.autofarm = mainSection:AddToggle("Autofarm Enable", {
+        Title = "Enable Autofarm",
+        Default = false,
+        Callback = function(value)
+            vars.autofarm = value
+
+            if value then
+                local oldpickup = toggles.autopickup.Value
+                local teleports = funcs.clone(vars.waypoints)
+
+                local lastcheckposition = localPlayer.Character:GetPivot().Position
+                local lastcheck = tick()
+
+                if vars.hide_enabled and not Fluent.Window.Minimized then
+                    Fluent.Window:Minimize()
+                end
+
+                kwconnections["safety"] = runService.Stepped:Connect(function()
+                    if tick() - lastcheck > 10 then
+                        if localPlayer.Character and (localPlayer.Character:GetPivot().Position - lastcheckposition).Magnitude <= 3 then
+                            toggles.autofarm:SetValue(false)
+                            wait(0.1)
+                            toggles.autofarm:SetValue(true)
+                        end
+
+                        if localPlayer.Character then
+                            lastcheckposition = localPlayer.Character:GetPivot().Position
+                        end
+                        lastcheck = tick()
+                    end
+                end)
+
+                kwconnections["autofarm"] = runService.Stepped:Connect(function()
+                    if vars.inAutofarm then
+                        return
+                    end
+                    
+                    local root = funcs.getRoot()
+                    local hum = funcs.getHumanoid()
+
+                    if not root or not hum or hum.Health <= 0 then
+                        return
+                    end
+
+                    vars.inAutofarm = true
+
+                    repeat wait() until tpCheckTimeAttribute or not vars.autofarm
+
+                    if not vars.autofarm then
+                        return
+                    end
+
+                    for i, v in pairs(teleports) do
+                        if not vars.autofarm then
+                            return
+                        end
+
+                        vars.teleportPosition = v
+
+                        repeat wait()
+                            if not hum then
+                                hum = vars.getHumanoid()
+                            end
+                        until hum and hum.Health > 0
+
+                        funcs.gotoPosition(v)
+
+                        wait(0.5)
+
+                        localPlayer:GetAttributeChangedSignal(tpCheckTimeAttribute):Wait()
+
+                        wait(0.2)
+
+                        local instances = vars.autofarmType == "Ores" and funcs.getOresInRange(40, v) or funcs.getChoppablesInRange(40, v)
+
+                        if #instances == 0 then
+                            local index = funcs.getIndexOfValueInTable(teleports, v)
+
+                            if index and index == 1 then
+                                if vars.disconnect_done then
+                                    game:Shutdown()
+                                    vars.autofarm = false
+                                    return
+                                else
+                                    local allInstances = vars.autofarmType == "Ores" and funcs.getAllOresInRange(40, v) or funcs.getAllChoppablesInRange(40, v)
+
+                                    vars.takeBreak = true
+
+                                    repeat wait(0.1)
+                                        instances = vars.autofarmType == "Ores" and funcs.getOresInRange(40, v) or funcs.getChoppablesInRange(40, v)
+                                    until #instances >= #allInstances
+                                    
+                                    vars.takeBreak = false
+                                end
+                            else
+                                continue
+                            end
+                        end
+
+                        if hum.SeatPart then
+                            hum.Sit = false
+                        end
+
+                        if #instances > 0 then
+                            if hum.SeatPart then
+                                hum.Sit = false
+                            end
+
+                            for i, v2 in pairs(instances) do
+                                repeat wait() until not vars.teleporting
+
+                                if not vars.inAutofarm then
+                                    break
+                                end
+
+                                if hum.SeatPart then
+                                    hum.Sit = false
+
+                                    repeat wait()
+                                        hum.Sit = false
+                                    until not hum.SeatPart
+                                end
+
+                                local position = v2:GetPivot().Position + Vector3.new(0, 5, 0)
+
+                                localPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(position)
+                                localPlayer.Character.HumanoidRootPart.Velocity = Vector3.zero
+
+                                local tool = vars.autofarmType == "Ores" and funcs.getBestTool("Pickaxe", "pickaxeStrength") or vars.autofarmType == "Choppables" and funcs.getBestTool("Axe", "axeStrength")
+
+                                if not tool then
+                                    toggles.autofarm:SetValue(false)
+                                    repeat wait() until not kwconnections["autofarm"]
+                                    return
+                                end
+
+                                local lastHit = 0
+
+                                repeat wait()
+                                    if localPlayer.Character then
+                                        if tick() - lastHit > 0.05 then
+                                            if vars.autofarmType == "Ores" then
+                                                replicatedStorage.remoteInterface.interactions.mine:FireServer(tool, v2, v2:GetPivot())
+                                            else
+                                                replicatedStorage.remoteInterface.interactions.chop:FireServer(tool, v2, v2:GetPivot())
+                                            end
+
+                                            lastHit = tick()
+                                        end
+                                    end
+                                until funcs.getHealth(v2) <= 0 or not vars.inAutofarm or not vars.autofarm
+
+                                if not vars.autofarm or not vars.inAutofarm then
+                                    return
+                                end
+
+                                wait(0.5)
+
+                                if hum.SeatPart then
+                                    repeat wait()
+                                        hum.Sit = false
+                                    until not hum.SeatPart
+                                end
+
+                                local items = funcs.getDroppedItemsInRange(25)
+
+                                if #items > 0 then
+                                    localPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(items[1]:GetPivot().Position)
+
+                                    if not toggles.autopickup.Value then
+                                        local lastpickup = 0
+
+                                        kwconnections["autopickup2"] = runService.Heartbeat:Connect(function(deltatime)
+                                            if toggles.autopickup.Value then
+                                                kwconnections["autopickup2"]:Disconnect()
+                                                kwconnections["autopickup2"] = nil
+                                            end
+                                            
+                                            if tick() - lastpickup >= 0.15 then
+                                                lastpickup = tick()
+
+                                                for i, v in pairs(funcs.getDroppedItemsInRange(vars.pickup_distance)) do
+                                                    pickupRemote:FireServer(v)
+                                                end
+                                            end
+                                        end)
+                                    end
+
+                                    repeat wait() until #funcs.getDroppedItemsInRange(15) <= 0 or not vars.inAutofarm or not vars.autofarm
+                                end
+                            end
+                        end
+                    end
+
+                    vars.inAutofarm = false
+                end)
+
+                repeat wait() until not vars.autofarm
+
+                if kwconnections["autofarm"] then
+                    kwconnections["autofarm"]:Disconnect()
+                    kwconnections["autofarm"] = nil
+                end
+
+                if kwconnections["safety"] then
+                    kwconnections["safety"]:Disconnect()
+                    kwconnections["safety"] = nil
+                end
+
+                if kwconnections["autopickup2"] then
+                    kwconnections["autopickup2"]:Disconnect()
+                    kwconnections["autopickup2"] = nil
+                end
+
+                vars.inAutofarm = false
+            end
+        end
+    })
+
+    waypointsSection:AddInput("name", {
+        Title = "Waypoint Name",
+        Default = "",
+        Placeholder = "",
+        Finished = false,
+        Callback = function(value)
+            if not value or value == "" then
+                return
+            end
+            
+            vars.waypointName = value
+        end
+    })
+
+    vars.waypointsDropdown = waypointsSection:AddDropdown("dropdown", {
+        Title = "Waypoints",
+        Values = funcs.displayWaypoints(),
+        Callback = function(value)
+            if not value then
+                return
+            end
+
+            local split = string.split(value, " | ")
+
+            vars.waypoint = funcs.getWaypoint(split[1])
+        end
+    })
+
+    waypointsSection:AddButton({
+        Title = "Goto Waypoint",
+        Callback = function()
+            if not vars.waypoint then
+                library:Notify({
+                    Title = "Error",
+                    Content = "You need to set select a waypoint first!",
+                    Duration = 5
+                })
+
+                return
+            end
+
+            local waypoint = vars.waypoint
+            
+            funcs.gotoPosition(waypoint.Position)
+
+            wait(0.1)
+
+            if localPlayer.Character.Humanoid.SeatPart then
+                library:Notify({
+                    Title = "Success",
+                    Content = "Successfully teleported to waypoint!",
+                    Duration = 5
+                })
+            else
+                library:Notify({
+                    Title = "Error",
+                    Content = "Something went wrong when teleporting. Possible issues: [Chair is missing]!",
+                    Duration = 5
+                })
+            end
+        end
+    })
+
+    waypointsSection:AddButton({
+        Title = "Create Waypoint",
+        Callback = function()
+            if not vars.waypointName then
+                library:Notify({
+                    Title = "Error",
+                    Content = "You need to set a name for the waypoint!",
+                    Duration = 5
+                })
+
+                return
+            end
+
+            local position = localPlayer.Character:GetPivot().Position
+
+            funcs.saveWaypoint(vars.waypointName, position)
+
+            library:Notify({
+                Title = "Success",
+                Content = "Successfully saved waypoint!",
+                Duration = 5
+            })
+
+            vars.waypointsDropdown:SetValues(funcs.displayWaypoints())
+        end
+    })
+
+    waypointsSection:AddButton({
+        Title = "Remove Waypoint",
+        Callback = function()
+            if not vars.waypoint then
+                library:Notify({
+                    Title = "Error",
+                    Content = "You need to select the waypoint you want to remove!",
+                    Duration = 5
+                })
+
+                return
+            end
+
+            funcs.removeWaypoint(vars.waypoint.Name)
+
+            library:Notify({
+                Title = "Success",
+                Content = "Successfully removed waypoint!",
+                Duration = 3
+            })
+
+            vars.waypointsDropdown:SetValues(funcs.displayWaypoints())
+        end
+    })
+
+    settingsSection:AddToggle("Auto Respawn", {
+        Title = "Auto Respawn",
+        Default = false,
+        Callback = function(value)
+            if kwconnections["autorespawn"] then
+                kwconnections["autorespawn"]:Disconnect()
+            end
+
+            if value then
+                if not funcs.isSpawned() then
+                    wait(1)
+                    
+                    funcs.spawn()
+                end
+
+                kwconnections["autorespawn"] = localPlayer.CharacterRemoving:Connect(function()
+                    repeat
+                        repeat wait() until not funcs.isSpawned()
+
+                        wait(2)
+
+                        funcs.spawn()
+
+                        wait(1)
+                    until funcs.isSpawned()
+                end)
+            end
+        end
+    })
+
+    settingsSection:AddToggle("Autofarm Disconnect When Done", {
+        Title = "Disconnect When Done",
+        Default = vars.disconnect_done,
+        Callback = function(value)
+            vars.disconnect_done = value
+        end
+    })
+ 
+    settingsSection:AddToggle("Autofarm Hide UI When Enabled", {
+        Title = "Hide UI When Enabled",
+        Default = vars.hide_enabled,
+        Callback = function(value)
+            vars.hide_enabled = value
+        end
+    })
+
+    toggles.placewaypoints = miscSection:AddToggle("Place Waypoint", {
+        Title = "Place Chair to Make Waypoint",
+        Default = false,
+        Callback = function(value)
+            local placing = false
+
+            if value then
+                vars.placeStructureFunction = hookfunction(getgenv().kwfunctions.placeStructure, function(...)
+                    local response = vars.placeStructureFunction(...)
+                    local args = {...}
+
+                    if placing then
+                        return
+                    end
+
+                    if args[1] == "Basic Chair" then
+                        local chair, timeplaced = nil, 0
+                        local name = nil
+                        placing = true
+
+                        for i, v in pairs(funcs.getChairsInRange(40)) do
+                            if v:GetAttribute("placedBy") == localPlayer.UserId then
+                                if timeplaced < v:GetAttribute("placeTime") then
+                                    chair = v; timeplaced = v:GetAttribute("placeTime")
+                                end
+                            end
+                        end
+
+                        if chair then
+                            if vars.waypointName then
+                                if funcs.getWaypoint(vars.waypointName) then
+                                    name = vars.waypointName .. " " .. tostring(funcs.getAmountOfObjectsInTable(vars.waypoints) + 1)
+                                else
+                                    name = vars.waypointName
+                                end
+                            else
+                                name = "Waypoint " .. tostring(funcs.getAmountOfObjectsInTable(vars.waypoints) + 1)
+                            end
+
+                            funcs.saveWaypoint(name, chair:GetPivot().Position, true)
+
+                            vars.refreshWaypoints = true
+                        end
+
+                        placing = false
+                    end
+
+                    return response
+                end)
+
+                --[[
+                vars.placeStructureFunction = hookfunction(getgenv().kwfunctions.placeStructure, function(...)
+                    local args = {...}
+
+                    vars.placeStructureFunction(table.unpack(args))
+
+                    if placing then
+                        return
+                    end
+
+                    print("placing", args[1])
+
+                    if args[1] == "Basic Chair" then
+                        local name = nil
+
+                        placing = true
+
+                        local amountwaypoints = 0
+
+                        for i, v in pairs(vars.waypoints) do
+                            amountwaypoints += 1
+                        end
+
+                        if vars.waypointName then
+                            if funcs.getWaypoint(vars.waypointName) then
+                                name = vars.waypointName .. " " .. tostring(amountwaypoints + 1)
+                            else
+                                name = vars.waypointName
+                            end
+                        else
+                            name = "Waypoint " .. tostring(amountwaypoints + 1)
+                        end
+
+                        local start = tick()
+                        local chair, distance = nil, math.huge
+
+                        print(amountwaypoints, " waypoints. getting placed chair")
+
+                        repeat wait(0.2)
+                            for i, v in pairs(funcs.getStructures("Basic Chair")) do
+                                local a = tonumber(tick() - v:GetAttribute("placeTime")) + 18000
+
+                                print(a)
+
+                                if tonumber(v:GetAttribute("placedBy")) == localPlayer.UserId and tonumber(tick() - v:GetAttribute("placeTime")) + 18000 < 2 then
+                                    local magnitude = (localPlayer.Character.HumanoidRootPart.Position - v:GetPivot().Position).Magnitude
+
+                                    if magnitude < distance then
+                                        chair = v; distance = magnitude
+                                    end
+                                end
+                            end
+                        until chair or tick() - start > 3
+
+                        if chair then
+                            print("got placed chair " .. tostring(distance) .. " studs away named " .. tostring(chair) .. "[" .. chair:GetFullName() .. "]")
+                        end
+
+                        if chair then
+                            funcs.saveWaypoint(name, chair:GetPivot().Position, true)
+
+                            vars.refreshWaypoints = true
+                        end
+                    end
+
+                    placing = false
+                end)
+                --]]
+            elseif vars.placeStructureFunction then
+                hookfunction(getgenv().kwfunctions.placeStructure, vars.placeStructureFunction)
+                vars.placeStructureFunction = nil
+            end
+        end
+    })
+
+    settingsSection:AddDropdown("Autofarm Type", {
+        Title = "Autofarm Type",
+        Values = {"Ores", "Choppables", "Crops"},
+        Multi = false,
+        Default = 1,
+        Callback = function(value)
+            vars.autofarmType = value
+        end
+    })
+
+    settingsSection:AddButton({
+        Title = "Export JSON Config",
+        Callback = function()
+            funcs.setupFolders(vars.foldername)
+
+            setclipboard(readfile(vars.foldername .. "/waypoints.json"))
+
+            library:Notify({
+                Title = "Success",
+                Content = "Successfully copied your JSON config.",
+                Duration = 5
+            })
+        end
+    })
+
+    settingsSection:AddInput("JSON", {
+        Title = "Import JSON Config",
+        Default = "",
+        Placeholder = "json",
+        Finished = true,
+        Callback = function(value)
+            if value == nil or value == "" then
+                return
+            end
+
+            local valid = true
+            local decoded = httpService:JSONDecode(value)
+
+            if decoded and typeof(decoded) == "table" then
+                for i, v in pairs(decoded) do
+                    if not i or not (v["x"] and v["y"] and v["z"]) then
+                        valid = false; break
+                    end
+                end
+            end
+
+            if valid then
+                for i, v in pairs(vars.waypoints) do
+                    funcs.removeWaypoint(i)
+                end
+
+                local amount = 0
+
+                for i, v in pairs(decoded) do
+                    funcs.saveWaypoint(i, Vector3.new(v.x, v.y, v.z), true)
+                    amount += 1
+                end
+
+                vars.waypointsDropdown:SetValues(funcs.displayWaypoints())
+
+                library:Notify({
+                    Title = "Success",
+                    Content = "Successfully imported " .. amount .. " waypoints.",
+                    Duration = 5
+                })
+            else
+                library:Notify({
+                    Title = "Error",
+                    Content = "Something went wrong while importing JSON config.",
+                    Duration = 5
+                })
+            end
+        end
+    })
+end
+
+local miscTab = window:AddTab({Title = "Miscellaneous", Icon = "package-open"}); do
+    local bossSection = miscTab:AddSection("Boss")
+    
+    local connection = nil
+    local connection2 = nil
+    local start = nil
+
+    local oldbossaura = toggles.bossaura.Value
+
+    bossSection:AddToggle("Boss Kill", {
+        Title = "Boss Kill",
+        Default = false,
+        Callback = function(value)
+            if kwconnections["bosskill"] then
+                kwconnections["bosskill"]:Disconnect()
+                kwconnections["bosskill"] = nil
+            end
+
+            if connection then
+                connection:Disconnect(); connection = nil
+            end
+
+            toggles.bossaura:SetValue(oldbossaura)
+
+            start = nil
+
+            if value then
+                local oldposition = nil
+                local titan = nil
+                local servertitan = nil
+                local hide = false
+                local lastteleport = tick()
+
+                kwconnections["bosskill"] = runService.Stepped:Connect(function()
+                    if not titan or not titan:FindFirstChild("HumanoidRootPart") then
+                        titan = aiclient:FindFirstChild("The Titan"); return
+                    end
+
+                    if not servertitan then
+                        servertitan = aiserver:FindFirstChild("The Titan")
+                    elseif servertitan:GetAttribute("Health") <= 0 then
+                        local root = funcs.getRoot()
+
+                        if root and servertitan:GetPivot() then
+                            root.CFrame = CFrame.new(servertitan:GetPivot().Position)
+                            root.Velocity = Vector3.zero
+                            root.AssemblyLinearVelocity = Vector3.zero
+                        end
+
+                        if kwconnections["bosskill"] then
+                            kwconnections["bosskill"]:Disconnect()
+                            kwconnections["bosskill"] = nil
+                        end
+            
+                        if connection then
+                            connection:Disconnect(); connection = nil
+                        end
+
+                        if connection2 then
+                            connection2:Disconnect(); connection2 = nil
+                        end
+
+                        return
+                    end
+
+                    if not connection then
+                        connection = servertitan:GetAttributeChangedSignal("State"):Connect(function()
+                            local state = servertitan:GetAttribute("State")
+
+                            if state == "Stomp" then
+                                hide = true
+                            else
+                                hide = false
+                            end
+                        end)
+                    end
+
+                    if not connection2 then  
+                        connection2 = servertitan.Parent.ChildRemoved:Connect(function(child)
+                            if tostring(child) == "The Titan" then
+                                local root = funcs.getRoot()
+                                
+                                root.Velocity = Vector3.zero
+                                root.AssemblyLinearVelocity = Vector3.zero
+                                root.CFrame = CFrame.new(oldposition)
+                            end
+                        end)
+                    end
+
+                    if tick() - lastteleport > 5 then
+                        start = nil
+                    end
+
+                    if not toggles.bossaura.Value then
+                        toggles.bossaura:SetValue(true)
+                    end
+
+                    local root = funcs.getRoot()
+
+                    if not root or not titan or (funcs.removeYAxis(root.Position) - funcs.removeYAxis(titan.HumanoidRootPart.Position)).Magnitude > 30 then
+                        return
+                    end
+
+                    if titan:FindFirstChild("AttackingHurtboxes") then
+                        titan.AttackingHurtboxes:ClearAllChildren()
+                    end
+
+                    oldposition = servertitan:GetPivot().Position
+
+                    if not start then
+                        start = tick()
+                    end
+
+                    lastteleport = tick()
+
+                    if hide or (funcs.getHealth(servertitan) > 300 and tick() - start > 15 and tick() - start < 22) then
+                        localPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(titan.HumanoidRootPart.Position) + Vector3.new(0, 50, 0)
+                        localPlayer.Character.HumanoidRootPart.Velocity = Vector3.zero
+
+                        if not hide then
+                            start = tick()
+                        end
+                    else
+                        localPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(titan.HumanoidRootPart.Position) + Vector3.new(0, 5, 0)
+                        localPlayer.Character.HumanoidRootPart.Velocity = Vector3.zero
+                    end
+                end)
+            end
+        end
+    })
+end
+
+local keybindsTab = window:AddTab({Title = "Keybinds", Icon = "command"}); do
+    local playerSection = keybindsTab:AddSection("Player")
+    local aurasSection = keybindsTab:AddSection("Auras")
+    local boatSection = keybindsTab:AddSection("Boat")
+
+    playerSection:AddKeybind("Speed Keybind", {
+        Title = "Speed",
+        Mode = "Toggle",
+        Default = "X",
+        Callback = function(value)
+            toggles.speed:SetValue(not toggles.speed.Value)
+        end
+    })
+
+    playerSection:AddKeybind("Invisible Fly Keybind", {
+        Title = "Invisibly Fly",
+        Mode = "Toggle",
+        Default = "G",
+        Callback = function(value)
+            toggles.invisiblefly:SetValue(not toggles.invisiblefly.Value)
+        end
+    })
+
+    playerSection:AddKeybind("Auto Pickup Keybind", {
+        Title = "Auto Pickup",
+        Mode = "Toggle",
+        Default = "",
+        Callback = function(value)
+            toggles.autopickup:SetValue(not toggles.autopickup.Value)
+        end
+    })
+
+    playerSection:AddKeybind("No Fall Damage Keybind", {
+        Title = "No Fall Damage",
+        Mode = "Toggle",
+        Default = "",
+        Callback = function(value)
+            toggles.nofalldamage:SetValue(not toggles.nofalldamage.Value)
+        end
+    })
+
+    aurasSection:AddKeybind("Kill Aura Keybind", {
+        Title = "Kill Aura",
+        Mode = "Toggle",
+        Default = "",
+        Callback = function(value)
+            toggles.killaura:SetValue(not toggles.killaura.Value)
+        end
+    })
+
+    aurasSection:AddKeybind("Hunt Aura Keybind", {
+        Title = "Hunt Aura",
+        Mode = "Toggle",
+        Default = "",
+        Callback = function(value)
+            toggles.huntaura:SetValue(not toggles.huntaura.Value)
+        end
+    })
+
+    aurasSection:AddKeybind("Boss Aura Keybind", {
+        Title = "Boss Aura",
+        Mode = "Toggle",
+        Default = "",
+        Callback = function(value)
+            toggles.bossaura:SetValue(not toggles.bossaura.Value)
+        end
+    })
+
+    boatSection:AddKeybind("Boat Speed Keybind", {
+        Title = "Boat Speed",
+        Mode = "Toggle",
+        Default = "",
+        Callback = function(value)
+            toggles.boatspeed:SetValue(not toggles.boatspeed.Value)
+        end
+    })
+end
+
+if vars.isMobile then
+    kwframe = Instance.new("Frame", Fluent.Window.TabHolder:FindFirstAncestorOfClass("ScreenGui"))
+    kwframe.BorderSizePixel = 0
+    kwframe.BackgroundColor3 = Color3.fromRGB(14, 14, 14)
+    kwframe.AnchorPoint = Vector2.new(0, 1)
+    kwframe.BackgroundTransparency = 1
+    kwframe.Size = UDim2.new(0, 60, 0, 60)
+    kwframe.BorderColor3 = Color3.fromRGB(0, 0, 0)
+    kwframe.Position = UDim2.new(0, 14, 1, -40)
+
+    local imageLabel = Instance.new("ImageLabel", kwframe)
+    imageLabel.BorderSizePixel = 0
+    imageLabel.BackgroundColor3 = Color3.fromRGB(14, 14, 14)
+    imageLabel.Image = "rbxassetid://17338571263"
+    imageLabel.Size = UDim2.new(1, 0, 1, 0)
+    imageLabel.BorderColor3 = Color3.fromRGB(0, 0, 0)
+    imageLabel.BackgroundTransparency = 0.35
+
+    local uiStroke = Instance.new("UIStroke", imageLabel)
+    uiStroke.Color = Color3.fromRGB(241, 241, 241)
+
+    local uiCorner = Instance.new("UICorner", imageLabel)
+    uiCorner.CornerRadius = UDim.new(1, 0)
+
+    local textButton = Instance.new("TextButton", kwframe)
+    textButton.BorderSizePixel = 0
+    textButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    textButton.TextSize = 14
+    textButton.FontFace = Font.new("rbxasset://fonts/families/SourceSansPro.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+    textButton.TextColor3 = Color3.fromRGB(0, 0, 0)
+    textButton.Size = UDim2.new(1, 0, 1, 0)
+    textButton.BorderColor3 = Color3.fromRGB(0, 0, 0)
+    textButton.Text = ""
+    textButton.BackgroundTransparency = 1
+
+    local uiCornerButton = Instance.new("UICorner", textButton)
+    uiCornerButton.CornerRadius = UDim.new(1, 0)
+
+    textButton.MouseButton1Click:Connect(function()
+        if Fluent then
+            Fluent.Window:Minimize()
+        end
+    end)
+end
+
+local settingsTab = window:AddTab({Title = "Settings", Icon = "settings"}); do
+    if kwframe then
+        local uiSection = settingsTab:AddSection("aura.solutions Icon")
+
+        uiSection:AddInput("placementXScale", {
+            Title = "Icon X Axis (Scale)",
+            Default = tostring(kwframe.Position.X.Scale),
+            Placeholder = "X Axis (".. tostring(kwframe.Position.X.Scale) .. ")",
+            Finished = true,
+            Callback = function(value)
+                if value == nil or value == "" then
+                    return
+                end
+
+                if tonumber(value) == nil then
+                    library:Notify({
+                        Title = "Error",
+                        Content = "Enter a valid number.",
+                        Duration = 3
+                    })
+                    return
+                end
+
+                local pos = kwframe.Position
+
+                kwframe.Position = UDim2.new(value, pos.X.Offset, pos.Y.Scale, pos.Y.Offset)
+            end
+        })
+
+        uiSection:AddInput("placementXOffset", {
+            Title = "Icon X Axis (Offset)",
+            Default = tostring(kwframe.Position.X.Offset),
+            Placeholder = "X Axis (".. tostring(kwframe.Position.X.Offset) .. ")",
+            Placeholder = "X Axis",
+            Finished = true,
+            Callback = function(value)
+                if value == nil or value == "" then
+                    return
+                end
+
+                if tonumber(value) == nil then
+                    library:Notify({
+                        Title = "Error",
+                        Content = "Enter a valid number.",
+                        Duration = 3
+                    })
+                    return
+                end
+
+                local pos = kwframe.Position
+
+                kwframe.Position = UDim2.new(pos.X.Scale, value, pos.Y.Scale, pos.Y.Offset)
+            end
+        })
+
+        uiSection:AddInput("placementYScale", {
+            Title = "Icon Y Axis (Scale)",
+            Default = tostring(kwframe.Position.Y.Scale),
+            Placeholder = "Y Axis (".. tostring(kwframe.Position.Y.Scale) .. ")",
+            Finished = true,
+            Callback = function(value)
+                if value == nil or value == "" then
+                    return
+                end
+
+                if tonumber(value) == nil then
+                    library:Notify({
+                        Title = "Error",
+                        Content = "Enter a valid number.",
+                        Duration = 3
+                    })
+                    return
+                end
+
+                local pos = kwframe.Position
+
+                kwframe.Position = UDim2.new(pos.X.Scale, pos.X.Offset, value, pos.Y.Offset)
+            end
+        })
+
+        uiSection:AddInput("placementYOffset", {
+            Title = "Icon Y Axis (Offset)",
+            Default = tostring(kwframe.Position.Y.Offset),
+            Placeholder = "Y Axis (".. tostring(kwframe.Position.Y.Offset) .. ")",
+            Placeholder = "Y Axis",
+            Finished = true,
+            Callback = function(value)
+                if value == nil or value == "" then
+                    return
+                end
+
+                if tonumber(value) == nil then
+                    library:Notify({
+                        Title = "Error",
+                        Content = "Enter a valid number.",
+                        Duration = 3
+                    })
+                    return
+                end
+
+                local pos = kwframe.Position
+
+                kwframe.Position = UDim2.new(pos.X.Scale, pos.X.Offset, pos.Y.Scale, value)
+            end
+        })
+    end
+end
+
+saveManager:SetLibrary(library)
+interfaceManager:SetLibrary(library)
+
+saveManager:IgnoreThemeSettings()
+
+interfaceManager:SetFolder(vars.foldername)
+saveManager:SetFolder(vars.foldername)
+
+interfaceManager:BuildInterfaceSection(settingsTab)
+saveManager:BuildConfigSection(settingsTab)
+
+saveManager:LoadAutoloadConfig()
+
+window:SelectTab(1)
+
+vars.waypoints = funcs.convertWaypoints(funcs.readWaypoints())
+
+local tag = Instance.new("IntValue", Fluent.Window.TabHolder)
+tag.Name = "aurasolutionsTag"
+
+local lastUpdated = tick()
+
+kwconnections["Waypoints Refresher"] = runService.Stepped:Connect(function()
+    if not vars.refreshWaypoints or tick() - lastUpdated < 0.25 then
+        return
+    end
+
+    lastUpdated = tick()
+    vars.refreshWaypoints = false
+
+    wait(0.25)
+
+    vars.waypoints = funcs.convertWaypoints(funcs.readWaypoints())
+
+    vars.waypointsDropdown:SetValues({})
+    vars.waypointsDropdown:SetValues(funcs.displayWaypoints())
+
+    library:Notify({
+        Title = "Success",
+        Content = "Successfully saved waypoint!",
+        Duration = 3
+    })
+end)
+
+kwconnections["aurasolutionsTag"] = coreGui.ChildRemoved:Connect(function(inst)
+    if inst:FindFirstChild("aurasolutionsTag", true) then
+        if kwconnections then
+            for i, v in pairs(kwconnections) do
+                if v then v:Disconnect() end
+            end
+
+            getgenv().kwconnections = {}
+        end
+
+        if vars.esps then
+            for i, v in pairs(vars.esps) do
+                v.Disable()
+            end
+        end
+
+        if vars.oreesps then
+            for i, v in pairs(vars.oreesps) do
+                v.Disable()
+            end
+        end
+
+        pcall(function()
+            toggles.nofalldamage.Callback(false)
+        end)
+        
+        pcall(function()
+            toggles.placewaypoints.Callback(false)
+        end)
+
+        vars.autofarm = false
+        vars.killaura = false
+        vars.chopaura = false
+        vars.mineaura = false
+        vars.huntaura = false
+        vars.bossaura = false
+        vars.invisiblefly = false
+    end
+end)
+
+for i, v in next, getconnections(localPlayer.Idled) do
+    v:Disable()
+end
